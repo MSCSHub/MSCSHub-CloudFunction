@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /Reviews/{review} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email.lower().matches(".*utexas[.]edu") ;
+    }
+    match /Class/{class} {
+    	allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email.lower().matches(".*utexas[.]edu");
+    }
+    match /Faq/{faqEntry} {
+    	allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email.lower().matches(".*utexas[.]edu");
+    }
+    match /FaqHistory/{faqEntry} {
+    	allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email.lower().matches(".*utexas[.]edu");
+    }
+    match /UserExtraData/{user} {
+    	allow read: if request.auth != null && request.auth.uid == user;
+      allow write: if request.auth.uid == user;
+    }
+    match /Feedback/{feed} {
+  		allow read: if false;
+      allow write: if true;
+  	}
+	}
+}
