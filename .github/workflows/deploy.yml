@@ -26,6 +26,7 @@ jobs:
       - name: Deploy to Firebase
         uses: w9jds/firebase-action@v14.5.0
         with:
-          args: deploy --only functions --project utmcs-1bcf2
+          args: deploy --only functions
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PROJECT_ID: utmcs-1bcf2
