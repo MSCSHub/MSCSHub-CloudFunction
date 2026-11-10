@@ -17,6 +17,54 @@ const reviewIndex = client.initIndex("MSCSHUB");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
+const nodeCrypto = require("crypto");
+
+// --- Request authentication helpers --------------------------------------
+
+// Constant-time comparison that tolerates differing lengths.
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
+  return nodeCrypto.timingSafeEqual(bufA, bufB);
+}
+
+// Admin HTTP endpoints require a shared secret in the `x-admin-key` header.
+// Set it with: firebase functions:config:set admin.key="<secret>"
+function isAuthorizedAdmin(req: any): boolean {
+  const expected = (functions.config().admin || {}).key;
+  if (!expected) {
+    // Fail closed if no admin key is configured.
+    return false;
+  }
+  return safeEqual(req.get("x-admin-key") || "", expected);
+}
+
+// Verify a request genuinely came from Slack using the app's signing secret.
+// Set it with: firebase functions:config:set slack.signing_secret="<secret>"
+function isValidSlackRequest(req: any): boolean {
+  const signingSecret = (functions.config().slack || {}).signing_secret;
+  if (!signingSecret) {
+    return false;
+  }
+  const timestamp = req.get("x-slack-request-timestamp");
+  const signature = req.get("x-slack-signature");
+  if (!timestamp || !signature) {
+    return false;
+  }
+  // Reject requests older than 5 minutes to prevent replay attacks.
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 60 * 5) {
+    return false;
+  }
+  const body = req.rawBody ? req.rawBody.toString() : JSON.stringify(req.body);
+  const base = `v0:${timestamp}:${body}`;
+  const expected = "v0=" + nodeCrypto.createHmac("sha256", signingSecret)
+    .update(base).digest("hex");
+  return safeEqual(signature, expected);
+}
+
 exports.slackBotScheduler = functions.pubsub.schedule("0 15 1,10,20 5,8,12 *").onRun(async (_context: any) => {
   const dateObj = new Date();
   const day = dateObj.getUTCDate();
@@ -38,14 +86,17 @@ exports.slackBotScheduler = functions.pubsub.schedule("0 15 1,10,20 5,8,12 *").o
 
 
 exports.SlackBotRemoveGraduates = functions.https.onRequest(async (req: any, res: any) => {
-  // console.log(req.body);
+  if (!isValidSlackRequest(req)) {
+    return res.status(401).send("Unauthorized");
+  }
+  // Respond to Slack's one-time URL verification handshake.
+  if (req.body && req.body.type === "url_verification") {
+    return res.status(200).send({challenge: req.body.challenge});
+  }
   const user = req.body.event.user;
   const text = req.body.event.text;
   console.log(user, " said : ", text);
   return res.status(200).send({});
-  // let challenge = req.body.challenge;
-  // console.log(challenge);
-  // return res.status(200).send({challenge: challenge});
 });
 
 async function sendMessage(messageType: any) {
@@ -209,6 +260,9 @@ async function sendMessage(messageType: any) {
 }
 
 exports.ScrapeWeb = functions.https.onRequest(async (req: any, res: any) => {
+  if (!isAuthorizedAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
   try {
     const response = await axios.get("https://www.cs.utexas.edu/graduate-program/masters-program/online-option/courses");
     const $ = cheerio.load(response.data);
@@ -295,6 +349,9 @@ exports.ScrapeWeb = functions.https.onRequest(async (req: any, res: any) => {
 });
 
 exports.RecalcClass = functions.https.onRequest(async (req: any, res: any) => {
+  if (!isAuthorizedAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
   // Lets pre-get the reviews
   const docs = await db.runTransaction(() => db.collection("Reviews").get());
 
@@ -388,7 +445,10 @@ exports.RecalcClass = functions.https.onRequest(async (req: any, res: any) => {
 
 
 // Create Inital Maps (This will removed once it works)
-exports.createClassMaps = functions.https.onRequest((_req: any, _res: any) => {
+exports.createClassMaps = functions.https.onRequest((req: any, res: any) => {
+  if (!isAuthorizedAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
   const classMap = new Map();
 
   return db.collection("Reviews").get().then((docs: any) => {
